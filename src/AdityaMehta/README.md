@@ -18,7 +18,7 @@ pip install -r requirements.txt
 ```
 
 ### Important Note:
-- Running the code was computationally expensive, so the images has been scaled down by a factor of ```0.3``` in order to reduce the computational time.
+- Running the code was computationally expensive, so the images has been scaled down by a factor of ```0.7``` in order to reduce the computational time.
 - To see the actual results without any scaling, navigate to ```src/AdityaMehta/Helpers/Master.py``` and change the value of ```SCALE``` to ```100```.
 - The ```Helpers``` module also has python files for each step in the pipeline of Panorama Stitching. Running individual files will give you the results of each step saved in the respective folders.
 
