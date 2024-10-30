@@ -29,11 +29,58 @@ def calculate_final_image_size(left, right, H):
 
     return max_x, min_x, max_y, min_y
 
+def distance_weighted_blend(left_overlap, right_overlap):
+    # Convert overlaps to grayscale for mask creation
+    left_gray = cv2.cvtColor(left_overlap, cv2.COLOR_BGR2GRAY)
+    right_gray = cv2.cvtColor(right_overlap, cv2.COLOR_BGR2GRAY)
+
+    # Calculate masks for non-zero regions
+    left_mask = (left_gray > 0).astype(np.uint8)
+    right_mask = (right_gray > 0).astype(np.uint8)
+
+    # Apply distance transform to create weighting matrices
+    left_dist_transform = cv2.distanceTransform(left_mask, cv2.DIST_L2, 3)
+    right_dist_transform = cv2.distanceTransform(right_mask, cv2.DIST_L2, 3)
+
+    # Normalize to create weight maps
+    left_weights = left_dist_transform / (left_dist_transform + right_dist_transform + 1e-6)
+    right_weights = right_dist_transform / (left_dist_transform + right_dist_transform + 1e-6)
+
+    # Blend the overlapping regions
+    blended_overlap = (left_overlap * left_weights[..., None] + right_overlap * right_weights[..., None]).astype(np.uint8)
+
+    return blended_overlap
+
 def stitch2right(left, right, H):
-    return stitch_images(left, right, H)
+    max_x, min_x, max_y, min_y = calculate_final_image_size(left, right, H)
+
+    output_width = max_x - min_x
+    output_height = max_y - min_y
+
+    output_img = np.zeros((output_height + 5, output_width + 5, 3), dtype=left.dtype)
+
+    left_offset_x = -min_x
+    left_offset_y = -min_y
+    output_img[left_offset_y:left_offset_y + left.shape[0], left_offset_x:left_offset_x + left.shape[1]] = left
+
+    warped_right = warp_image(right, H, output_img.shape, -left_offset_x, -left_offset_y)
+
+    overlap_x_start = max(0, left_offset_x)
+    overlap_x_end = min(output_img.shape[1], left_offset_x + left.shape[1])
+
+    left_overlap = output_img[:, overlap_x_start:overlap_x_end]
+    right_overlap = warped_right[:, overlap_x_start:overlap_x_end]
+
+    # Perform distance-based blending
+    blended_overlap = distance_weighted_blend(left_overlap, right_overlap)
+
+    mask = (left_overlap > 0) & (right_overlap > 0)
+    output_img[:, overlap_x_start:overlap_x_end][mask] = blended_overlap[mask]
+    output_img[(output_img == 0) & (warped_right > 0)] = warped_right[(output_img == 0) & (warped_right > 0)]
+
+    return output_img, warped_right
 
 def stitch2left(left, right, H):
-    # Invert the homography matrix to warp the left image onto the right image's plane
     H_inv = np.linalg.inv(H)
     max_x, min_x, max_y, min_y = calculate_final_image_size(right, left, H_inv)
 
@@ -42,74 +89,27 @@ def stitch2left(left, right, H):
 
     output_img = np.zeros((output_height + 5, output_width + 5, 3), dtype=right.dtype)
 
-    # Adjust the position of the right image in the output image
     right_offset_x = -min_x
     right_offset_y = -min_y
     output_img[right_offset_y:right_offset_y + right.shape[0], right_offset_x:right_offset_x + right.shape[1]] = right
 
-    # Warp the left image using the inverse homography
     warped_left = warp_image(left, H_inv, output_img.shape, -right_offset_x, -right_offset_y)
 
     # Define overlap region
     overlap_x_start = max(0, right_offset_x)
     overlap_x_end = min(output_img.shape[1], right_offset_x + right.shape[1])
 
-    # Create linear blend mask
-    blend_width = overlap_x_end - overlap_x_start
-    blend_mask = np.linspace(0, 1, blend_width).reshape(1, blend_width, 1)
-
-    # Get overlapping regions for blending
     right_overlap = output_img[:, overlap_x_start:overlap_x_end]
     left_overlap = warped_left[:, overlap_x_start:overlap_x_end]
 
-    # Apply the blend only where both images have data (non-zero)
-    mask = (left_overlap > 0) & (right_overlap > 0)
-    blended = (right_overlap * (1 - blend_mask) + left_overlap * blend_mask).astype(right.dtype)
+    # Perform distance-based blending
+    blended_overlap = distance_weighted_blend(left_overlap, right_overlap)
 
-    # Combine the images
-    output_img[:, overlap_x_start:overlap_x_end][mask] = blended[mask]
+    mask = (left_overlap > 0) & (right_overlap > 0)
+    output_img[:, overlap_x_start:overlap_x_end][mask] = blended_overlap[mask]
     output_img[(output_img == 0) & (warped_left > 0)] = warped_left[(output_img == 0) & (warped_left > 0)]
 
     return output_img, warped_left
-
-
-def stitch_images(left, right, H):
-    max_x, min_x, max_y, min_y = calculate_final_image_size(left, right, H)
-
-    output_width = max_x - min_x
-    output_height = max_y - min_y
-
-    output_img = np.zeros((output_height + 5, output_width + 5, 3), dtype=left.dtype)
-
-    # Adjust the position of the left image in the output image
-    left_offset_x = -min_x
-    left_offset_y = -min_y
-    output_img[left_offset_y:left_offset_y + left.shape[0], left_offset_x:left_offset_x + left.shape[1]] = left
-
-    # Warp the right image
-    warped_right = warp_image(right, H, output_img.shape, -left_offset_x, -left_offset_y)
-
-    # Define overlap region
-    overlap_x_start = max(0, left_offset_x)  # Start of overlap in x
-    overlap_x_end = min(output_img.shape[1], left_offset_x + left.shape[1])  # End of overlap in x
-
-    # Create linear blend mask
-    blend_width = overlap_x_end - overlap_x_start
-    blend_mask = np.linspace(0, 1, blend_width).reshape(1, blend_width, 1)  # Shape for broadcasting with RGB
-
-    # Get overlapping regions for blending
-    left_overlap = output_img[:, overlap_x_start:overlap_x_end]
-    right_overlap = warped_right[:, overlap_x_start:overlap_x_end]
-
-    # Apply the blend only where both images have data (non-zero)
-    mask = (left_overlap > 0) & (right_overlap > 0)
-    blended = (left_overlap * (1 - blend_mask) + right_overlap * blend_mask).astype(left.dtype)
-
-    # Combine the images
-    output_img[:, overlap_x_start:overlap_x_end][mask] = blended[mask]
-    output_img[(output_img == 0) & (warped_right > 0)] = warped_right[(output_img == 0) & (warped_right > 0)]
-
-    return output_img, warped_right
 
 def main():
     img1 = cv2.imread('Images/STA_0031.jpg')
@@ -134,7 +134,7 @@ def main():
 
     print("Homography matrix estimated")
 
-    output_img, warped_right = stitch_images(img1, img2, H)
+    output_img, warped_right = stitch2left(img1, img2, H)
 
     print("Images stitched")
 
