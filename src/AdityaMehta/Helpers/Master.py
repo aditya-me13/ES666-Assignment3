@@ -7,7 +7,7 @@ from src.AdityaMehta.Helpers.KeypointMatcher import match_keypoints
 from src.AdityaMehta.Helpers.Homography import ransac
 from src.AdityaMehta.Helpers.Stitcher import stitch2left, stitch2right
 
-SCALE = 30 # Update Accordingly here
+SCALE = 70 # Update Accordingly here
 
 def resize_image(image, scale_percent):
     width = int(image.shape[1] * scale_percent / 100)
